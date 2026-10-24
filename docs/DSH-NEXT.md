@@ -2,7 +2,7 @@
 
 本分支在 [YuJunZhiXue/dsh-purge](https://github.com/YuJunZhiXue/dsh-purge) 1.1.78 的基础上适配 DSH NEXT。保留原作者署名与许可证。DSH NEXT 是社区项目，与 DeepSeek 官方桌面端不同。
 
-当前范围：Windows **DSH NEXT 2.0.19-next / Harness 0.2.1-rc.2**，插件版本 **1.1.78-next.2**。应用前会核对这两个版本及程序包布局；未知版本会在解包前停止。
+当前范围：Windows **DSH NEXT 2.0.19-next / Harness 0.2.1-rc.2**，插件版本 **1.1.78-next.3**。应用前会核对这两个版本及程序包布局；未知版本会在解包前停止。
 
 ## 安装到客户端
 
@@ -44,3 +44,9 @@ node --expose-internals scripts/verify-next-copy.mjs '<DSH NEXT 程序完整路�
 归档切换辅助脚本现在会验证移动结果；失败时保留旧归档、停止重新启动并将原因写到临时目录中对应的 `dsh-purge-asar-swap-<pid>.ps1.log`。DSH NEXT 的切换过程由独立辅助进程完成，不提前请求仅重启 Host。
 
 如果已有补丁和备份，但客户端仍从 `app.asar` 加载，重新启动并加载适配版后，清洗页会再次提示完成整应用切换。应选择该提示里的重启操作，无需重复应用补丁。
+
+## next.3 的辅助进程启动修正
+
+本机隔离测试复现：Windows PowerShell 5.1 被 Node 以 `detached: true` 启动时，返回成功退出码，但未执行脚本，连首行日志都没有。因此 Next 改由短时启动器使用 Windows `Start-Process -WindowStyle Hidden` 创建独立辅助进程；命令以 UTF-16 编码传递，保留中文、空格及单引号路径。启动器日志写入同名 `.ps1.launch.log`，实际切换过程写入 `.ps1.log`。
+
+新增回归测试通过真实启动链检查隐藏辅助脚本在 Node 父进程退出后继续执行；归档移动成功和失败测试也使用此启动链，仅处理隔离副本并拦截进程结束与客户端启动操作。真实客户端仍需使用者完成切换并确认。

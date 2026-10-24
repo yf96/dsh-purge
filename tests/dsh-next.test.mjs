@@ -5,12 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { pathToFileURL } from "node:url";
 import { needsDesktopArchiveHandoff } from "../lib/settle-policy.js";
 import { detectSurface } from "../lib/surface.js";
 import * as desktop from "../lib/desktop.js";
 import * as core from "../lib/core.js";
 import { readAsarFile, renameAsarAside } from "../lib/extract-asar.js";
-import { windowsDesktopPidScript } from "../lib/desktop-process.js";
+import { windowsDesktopPidScript, windowsIndependentPowerShellPlan } from "../lib/desktop-process.js";
 import { safeUpdateRef, archiveTarballUrl as tarballUrl } from "../lib/update.js";
 
 // A small real ASAR fixture, including the product and upstream manifests.
@@ -205,11 +206,56 @@ test("Next handoff delegates full application shutdown without requesting a Host
     });
     assert.equal(result.scheduled, true);
     assert.equal(launches.length, 1);
-    assert.equal(launches[0][0], "powershell.exe");
-    assert.equal(launches[0][2].detached, true);
+    assert.match(launches[0][0], /WindowsPowerShell.*powershell\.exe$/);
+    assert.equal(launches[0][2].detached, false);
+    assert.equal(launches[0][2].windowsHide, true);
+    const bootstrap = Buffer.from(launches[0][1].at(-1), "base64").toString("utf16le");
+    assert.match(bootstrap, /Start-Process.*-WindowStyle Hidden/);
     assert.equal(restarts, 0);
     assert.equal(fs.existsSync(f.asar), true);
   });
+});
+
+test("Next Windows helper executes hidden and survives its Node parent exiting", { skip: process.platform !== "win32" }, async () => {
+  const f = fixture();
+  try {
+    const scriptDir = path.join(f.root, "中文 user's helper");
+    fs.mkdirSync(scriptDir);
+    const marker = path.join(scriptDir, "survived.txt");
+    const parent = path.join(f.root, "parent.mjs");
+    const desktopUrl = pathToFileURL(path.resolve("lib/desktop.js")).href;
+    fs.writeFileSync(parent, `
+      import fs from 'node:fs';
+      import path from 'node:path';
+      import {spawn} from 'node:child_process';
+      import {scheduleAsarSwapRestart} from ${JSON.stringify(desktopUrl)};
+      let child;
+      scheduleAsarSwapRestart(${JSON.stringify({ exe: f.exe, asar: f.asar, exit: true })}, {
+        scriptDir: ${JSON.stringify(scriptDir)}, log: () => {},
+        spawn: (file, args, options) => {
+          // Replace the generated destructive helper before it can execute.
+          const script = path.join(${JSON.stringify(scriptDir)}, 'dsh-purge-asar-swap-' + process.pid + '.ps1');
+          const marker = ${JSON.stringify(marker)};
+          fs.writeFileSync(script, "\\uFEFFparam([int]$WaitPid,[string]$AsarPath,[string]$ExePath)\\r\\nStart-Sleep -Seconds 1\\r\\n[IO.File]::WriteAllText('" + marker.replaceAll("'", "''") + "','survived')\\r\\n", 'utf8');
+          child = spawn(file, args, options);
+          return child;
+        }
+      });
+      child.ref();
+      const code = await new Promise((resolve, reject) => { child.on('error', reject); child.on('exit', resolve); });
+      if (code !== 0) throw new Error('Launcher exit ' + code);
+    `, "utf8");
+    execFileSync(process.execPath, [parent], { windowsHide: true, timeout: 15000 });
+    const deadline = Date.now() + 8000;
+    while (!fs.existsSync(marker) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 40));
+    assert.equal(fs.existsSync(marker), true, "hidden helper must execute after its parent exits");
+    assert.equal(fs.readFileSync(marker, "utf8"), "survived");
+    assert.equal(fs.existsSync(f.asar), true);
+  } finally {
+    assert.equal(path.dirname(f.root), os.tmpdir());
+    assert.ok(path.basename(f.root).startsWith("dsh-purge-next-"));
+    fs.rmSync(f.root, { recursive: true, force: true });
+  }
 });
 
 for (const failure of [false, true]) {
@@ -217,6 +263,7 @@ for (const failure of [false, true]) {
     const f = fixture();
     await inHost(f, async () => {
       const script = path.join(f.root, "swap.ps1");
+      const resultFile = path.join(f.root, "result.json");
       fs.writeFileSync(script, "\uFEFF" + desktop.asarSwapScript(), "utf8");
       const literal = (value) => "'" + value.replace(/'/g, "''") + "'";
       const ps = [
@@ -228,13 +275,15 @@ for (const failure of [false, true]) {
         "function Start-Process { [CmdletBinding()]param([string]$FilePath) $script:launched=$true }",
         ...(failure ? ["function Move-Item { [CmdletBinding()]param([string]$LiteralPath,[string]$Destination,[switch]$Force) Write-Error 'Simulated archive move failure' }"] : []),
         `. ${literal(script)} -WaitPid 2147483647 -AsarPath ${literal(f.asar)} -ExePath ${literal(f.exe)}`,
-        `[PSCustomObject]@{OriginalExists=(Test-Path -LiteralPath ${literal(f.asar)});BackupExists=(Test-Path -LiteralPath ${literal(f.asar + ".bak")});LaunchRequested=[bool]$script:launched}|ConvertTo-Json -Compress`,
+        `[PSCustomObject]@{OriginalExists=(Test-Path -LiteralPath ${literal(f.asar)});BackupExists=(Test-Path -LiteralPath ${literal(f.asar + ".bak")});LaunchRequested=[bool]$script:launched}|ConvertTo-Json -Compress|Set-Content -LiteralPath ${literal(resultFile)} -Encoding utf8`,
       ].join("\n");
-      const systemRoot = process.env.SystemRoot || "C:\\Windows";
-      const out = execFileSync(path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(ps, "utf16le").toString("base64")],
-        { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"], timeout: 15000 });
-      const result = JSON.parse(out.trim());
+      const runner = path.join(f.root, "isolated-runner.ps1");
+      fs.writeFileSync(runner, "\uFEFF" + ps, "utf8");
+      const launch = windowsIndependentPowerShellPlan(runner, []);
+      execFileSync(launch.file, launch.args, { ...launch.options, timeout: 15000 });
+      const deadline = Date.now() + 8000;
+      while (!fs.existsSync(resultFile) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 40));
+      const result = JSON.parse(fs.readFileSync(resultFile, "utf8").replace(/^\uFEFF/, "").trim());
       assert.equal(result.LaunchRequested, !failure);
       assert.equal(result.BackupExists, !failure);
       assert.equal(result.OriginalExists, failure);
