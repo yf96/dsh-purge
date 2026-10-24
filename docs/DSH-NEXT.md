@@ -2,7 +2,7 @@
 
 本分支在 [YuJunZhiXue/dsh-purge](https://github.com/YuJunZhiXue/dsh-purge) 1.1.78 的基础上适配 DSH NEXT。保留原作者署名与许可证。DSH NEXT 是社区项目，与 DeepSeek 官方桌面端不同。
 
-当前范围：Windows **DSH NEXT 2.0.19-next / Harness 0.2.1-rc.2**，插件版本 **1.1.78-next.1**。应用前会核对这两个版本及程序包布局；未知版本会在解包前停止。
+当前范围：Windows **DSH NEXT 2.0.19-next / Harness 0.2.1-rc.2**，插件版本 **1.1.78-next.2**。应用前会核对这两个版本及程序包布局；未知版本会在解包前停止。
 
 ## 安装到客户端
 
@@ -38,3 +38,9 @@ node --expose-internals scripts/verify-next-copy.mjs '<DSH NEXT 程序完整路�
 界面正常时，先使用“清洗 → 还原”恢复目标文件，再由使用者重启。原机制保留用户提示词文件。
 
 如果应用后的客户端无法启动，完全退出它并保留当前文件：在确认原 `app.asar` 不存在、`app.asar.bak` 是该次应用前的归档后，将 `resources/app` 改名留存，再把 `app.asar.bak` 恢复为 `app.asar`。不要删除用户的 `.dsh` 数据目录，也不要覆盖其它版本的归档。
+
+## next.2 的切换修正
+
+归档切换辅助脚本现在会验证移动结果；失败时保留旧归档、停止重新启动并将原因写到临时目录中对应的 `dsh-purge-asar-swap-<pid>.ps1.log`。DSH NEXT 的切换过程由独立辅助进程完成，不提前请求仅重启 Host。
+
+如果已有补丁和备份，但客户端仍从 `app.asar` 加载，重新启动并加载适配版后，清洗页会再次提示完成整应用切换。应选择该提示里的重启操作，无需重复应用补丁。

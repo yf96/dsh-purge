@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { needsDesktopArchiveHandoff } from "../lib/settle-policy.js";
 import { detectSurface } from "../lib/surface.js";
 import * as desktop from "../lib/desktop.js";
 import * as core from "../lib/core.js";
@@ -177,3 +180,66 @@ test("fork update URL retains the compatibility branch", () => {
   assert.equal(safeUpdateRef("../other"), "");
   assert.match(tarballUrl("compat/dsh-next"), /yf96\/dsh-purge\/tar\.gz\/refs\/heads\/compat%2Fdsh-next$/);
 });
+
+test("archive handoff remains visible after a Host-only restart but not before application", () => {
+  const written = { surface: "desktop", sealed: true, aiBase: "owned-app/node_modules/@deepseek-ai", hasBackup: true, hostWritten: true };
+  assert.equal(needsDesktopArchiveHandoff(written), true);
+  for (const field of ["sealed", "aiBase", "hasBackup", "hostWritten"]) {
+    assert.equal(needsDesktopArchiveHandoff({ ...written, [field]: false }), false);
+  }
+  assert.equal(needsDesktopArchiveHandoff({ ...written, surface: "web" }), false);
+});
+
+test("Next handoff delegates full application shutdown without requesting a Host-only restart", { skip: process.platform !== "win32" }, async () => {
+  const f = fixture();
+  await inHost(f, async () => {
+    let restarts = 0;
+    const launches = [];
+    const child = new EventEmitter();
+    child.unref = () => {};
+    child.pid = 123456;
+    const ctx = { get: () => ({ requestRestart: () => { restarts++; } }) };
+    const result = desktop.scheduleAsarSwapRestart({ exe: f.exe, asar: f.asar, exit: true, ctx }, {
+      scriptDir: f.root, log: () => {},
+      spawn: (...args) => { launches.push(args); return child; },
+    });
+    assert.equal(result.scheduled, true);
+    assert.equal(launches.length, 1);
+    assert.equal(launches[0][0], "powershell.exe");
+    assert.equal(launches[0][2].detached, true);
+    assert.equal(restarts, 0);
+    assert.equal(fs.existsSync(f.asar), true);
+  });
+});
+
+for (const failure of [false, true]) {
+  test(`Windows archive swap ${failure ? "does not launch after a nonterminating move error" : "launches only after the original archive is preserved"}`, { skip: process.platform !== "win32" }, async () => {
+    const f = fixture();
+    await inHost(f, async () => {
+      const script = path.join(f.root, "swap.ps1");
+      fs.writeFileSync(script, "\uFEFF" + desktop.asarSwapScript(), "utf8");
+      const literal = (value) => "'" + value.replace(/'/g, "''") + "'";
+      const ps = [
+        "$ProgressPreference='SilentlyContinue'",
+        "function Get-CimInstance { return @() }",
+        "function Get-Process { return $null }",
+        "function Stop-Process { throw 'Process operations forbidden in this test' }",
+        "function Start-Sleep {}",
+        "function Start-Process { [CmdletBinding()]param([string]$FilePath) $script:launched=$true }",
+        ...(failure ? ["function Move-Item { [CmdletBinding()]param([string]$LiteralPath,[string]$Destination,[switch]$Force) Write-Error 'Simulated archive move failure' }"] : []),
+        `. ${literal(script)} -WaitPid 2147483647 -AsarPath ${literal(f.asar)} -ExePath ${literal(f.exe)}`,
+        `[PSCustomObject]@{OriginalExists=(Test-Path -LiteralPath ${literal(f.asar)});BackupExists=(Test-Path -LiteralPath ${literal(f.asar + ".bak")});LaunchRequested=[bool]$script:launched}|ConvertTo-Json -Compress`,
+      ].join("\n");
+      const systemRoot = process.env.SystemRoot || "C:\\Windows";
+      const out = execFileSync(path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(ps, "utf16le").toString("base64")],
+        { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"], timeout: 15000 });
+      const result = JSON.parse(out.trim());
+      assert.equal(result.LaunchRequested, !failure);
+      assert.equal(result.BackupExists, !failure);
+      assert.equal(result.OriginalExists, failure);
+      const log = fs.readFileSync(script + ".log", "utf8");
+      assert.match(log, failure ? /handoff failed; client was not relaunched/ : /archive moved to/);
+    });
+  });
+}

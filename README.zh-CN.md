@@ -1,4 +1,4 @@
-> **此 fork 的 DSH NEXT 适配分支**：针对 Windows DSH NEXT **2.0.19-next / Harness 0.2.1-rc.2**，版本 **1.1.78-next.1**。安装、验证、限制和恢复步骤见 [DSH NEXT 说明](docs/DSH-NEXT.md)。下方保留上游 README，文中的“社区桌面端不维护”是上游的支持范围。
+> **此 fork 的 DSH NEXT 适配分支**：针对 Windows DSH NEXT **2.0.19-next / Harness 0.2.1-rc.2**，版本 **1.1.78-next.2**。安装、验证、限制和恢复步骤见 [DSH NEXT 说明](docs/DSH-NEXT.md)。下方保留上游 README，文中的“社区桌面端不维护”是上游的支持范围。
 
 <p align="center">
   <img src="docs/banner.svg" alt="dsh-purge" width="720">
