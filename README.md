@@ -1,3 +1,5 @@
+> **DSH NEXT compatibility fork**: Windows DSH NEXT **2.0.19-next / Harness 0.2.1-rc.2**, plugin **1.1.78-next.1**. See [installation, verification, limits and recovery](docs/DSH-NEXT.md). The upstream README below is retained with its original attribution and support policy.
+
 <p align="center">
   <img src="docs/banner.svg" alt="dsh-purge" width="720">
 </p>

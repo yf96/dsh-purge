@@ -1945,7 +1945,7 @@ body:not([data-ds-dark-theme]) .dshp-auth-ops button.primary{background:var(--ds
 			return h("section", { className: "dshp-panel", "aria-label": t("purge.title") },
 				h("div", { className: "dshp-head" },
 					h("h3", { className: "dshp-title" }, t("purge.title")),
-					h("span", { className: "dshp-pill" }, t("surface." + hostSurface)),
+					h("span", { className: "dshp-pill" }, (s && s.desktop_variant) || t("surface." + hostSurface)),
 				),
 				h("div", { className: "dshp-rel" },
 					h("div", { className: "dshp-now" },
@@ -2009,7 +2009,7 @@ body:not([data-ds-dark-theme]) .dshp-auth-ops button.primary{background:var(--ds
 					),
 				) : null,
 				h("p", { className: "dshp-hint", style: { margin: "8px 0 0", color: "var(--dshp-mute)", fontSize: 12 } }, t("apply.hint")),
-				s && !s.ai_base ? h("p", { className: "dshp-hint", style: { margin: "8px 0 0", color: "var(--dshp-danger, #c44)", fontSize: 12 } }, hostText(t, "warn.noRoot", hostSurface)) : null,
+				s && !s.ai_base ? h("p", { className: "dshp-hint", style: { margin: "8px 0 0", color: "var(--dshp-danger, #c44)", fontSize: 12 } }, s.desktop_compatibility_error || (s.desktop_variant === "DSH NEXT" ? "已识别 DSH NEXT。程序包位于 app.asar；点击应用时才会解包、备份并写入补丁。" : hostText(t, "warn.noRoot", hostSurface))) : null,
 				s && s.ai_base && s.override_status === "missing" ? h("p", { className: "dshp-hint", style: { margin: "8px 0 0", color: "var(--dshp-mute)", fontSize: 12 } }, t("warn.noInject")) : null,
 				askRestart ? h(RestartAsk, {
 					t: t,
